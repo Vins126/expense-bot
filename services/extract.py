@@ -103,10 +103,15 @@ def extract_expense_from_image(image_bytes: bytes) -> list[Expense]:
     today = date.today()
     b64 = base64.b64encode(image_bytes).decode()
     prompt = f"""Sei un assistente per il tracciamento delle spese personali.
-Analizza questo scontrino ed estrai le informazioni sulla spesa.
+Analizza questo scontrino e raggruppa i prodotti per categoria di spesa.
 {_date_context()}
 
+Crea UNA voce per ogni categoria presente nello scontrino (non una per prodotto).
+Somma gli importi dei prodotti della stessa categoria.
+Usa la data dello scontrino se leggibile, altrimenti oggi.
+
 Rispondi SOLO con un array JSON. Ogni elemento ha: date, amount, category, description.
+La description deve indicare il negozio/tipo di spesa (es. "Spesa Esselunga", "Detersivi Lidl").
 Se non riesci a leggere lo scontrino, rispondi con [].
 Non aggiungere nulla oltre all'array JSON."""
     try:

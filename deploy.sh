@@ -23,6 +23,7 @@ gcloud compute ssh "$REMOTE" \
     --command="
         tar -xzf expense-bot.tar.gz &&
         rm -f ~/expense-bot/deploy.sh &&
+        ~/expense-bot/.venv/bin/pip install -q -r ~/expense-bot/requirements.txt &&
         sudo systemctl restart expense-bot &&
         sleep 2 &&
         sudo systemctl status expense-bot --no-pager | head -5
