@@ -8,7 +8,7 @@ from telegram.ext import (
     CommandHandler,
     filters,
 )
-from config import AUTHORIZED_USER_ID
+from config import AUTHORIZED_USER_IDS
 from services.transcribe import transcribe_audio, download_telegram_file
 from services.extract import extract_expense, Expense
 from services.sheets import append_expense
@@ -20,7 +20,7 @@ _PENDING_EXPENSE_KEY = "pending_expense"
 
 
 def _is_authorized(update: Update) -> bool:
-    return update.effective_user.id == AUTHORIZED_USER_ID
+    return update.effective_user.id in AUTHORIZED_USER_IDS
 
 
 def _expense_preview(expense: Expense) -> str:
