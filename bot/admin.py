@@ -8,11 +8,43 @@ from services.runtime import START_TIME
 
 logger = logging.getLogger(__name__)
 
+_HELP_ADMIN = """
+📋 *Comandi disponibili*
+
+💬 *Spese:*
+• Messaggio vocale → trascrive e registra
+• Testo libero → _"ho speso 10 euro al bar"_
+
+🔧 *Admin:*
+/adduser `<id>` — aggiunge utente autorizzato
+/removeuser `<id>` — rimuove utente autorizzato
+/listusers — lista utenti autorizzati
+/logs — ultimi log del bot
+/status — stato e uptime del bot
+/help — questo messaggio
+""".strip()
+
+_HELP_USER = """
+📋 *Come usare il bot:*
+
+• Invia un *messaggio vocale* con la spesa
+• Oppure scrivi: _"ho speso 15 euro al supermercato"_
+
+Il bot ti chiederà conferma prima di salvare.
+""".strip()
+
 _LOG_FILE = Path(__file__).parent.parent / "data" / "bot.log"
 
 
 def _is_admin(update: Update) -> bool:
     return update.effective_user.id == ADMIN_USER_ID
+
+
+async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if _is_admin(update):
+        await update.message.reply_text(_HELP_ADMIN, parse_mode="Markdown")
+    else:
+        await update.message.reply_text(_HELP_USER, parse_mode="Markdown")
 
 
 async def cmd_adduser(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

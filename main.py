@@ -2,10 +2,11 @@ import logging
 import os
 import sys
 from pathlib import Path
-from telegram.ext import ApplicationBuilder, CommandHandler
+from telegram import BotCommand
+from telegram.ext import Application, ApplicationBuilder, CommandHandler
 from config import BOT_TOKEN, AUTHORIZED_USER_IDS
 from bot.handlers import build_conversation_handler, start
-from bot.admin import cmd_adduser, cmd_removeuser, cmd_listusers, cmd_logs, cmd_status
+from bot.admin import cmd_adduser, cmd_removeuser, cmd_listusers, cmd_logs, cmd_status, cmd_help
 from services.sheets import ensure_dashboard_sheet
 from services.storage import initialize_users
 
@@ -56,8 +57,19 @@ def main() -> None:
         initialize_users(AUTHORIZED_USER_IDS)
         ensure_dashboard_sheet()
 
-        app = ApplicationBuilder().token(BOT_TOKEN).build()
+        async def post_init(application: Application) -> None:
+            await application.bot.set_my_commands([
+                BotCommand("help", "Lista comandi"),
+                BotCommand("status", "Stato e uptime del bot"),
+                BotCommand("listusers", "Utenti autorizzati"),
+                BotCommand("adduser", "Aggiungi utente: /adduser <id>"),
+                BotCommand("removeuser", "Rimuovi utente: /removeuser <id>"),
+                BotCommand("logs", "Ultimi log del bot"),
+            ])
+
+        app = ApplicationBuilder().token(BOT_TOKEN).post_init(post_init).build()
         app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("help", cmd_help))
         app.add_handler(CommandHandler("adduser", cmd_adduser))
         app.add_handler(CommandHandler("removeuser", cmd_removeuser))
         app.add_handler(CommandHandler("listusers", cmd_listusers))
