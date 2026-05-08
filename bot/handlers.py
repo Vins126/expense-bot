@@ -146,6 +146,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Scrivi ad esempio:\n"
             "• _importo 25_\n"
             "• _categoria Trasporti_\n"
+            "• _descrizione Spesa Lidl_\n"
             "• _data ieri_",
             parse_mode="Markdown",
         )

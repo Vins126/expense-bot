@@ -1,4 +1,5 @@
 import json
+import re
 import base64
 from datetime import date, timedelta
 from dataclasses import dataclass
@@ -67,8 +68,17 @@ class Expense:
     description: str
 
 
+def _clean_json(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+    match = re.search(r"[\[{].*[\]}]", raw, re.DOTALL)
+    return match.group() if match else raw
+
+
 def _parse_expenses(raw: str) -> list[Expense]:
-    data = json.loads(raw)
+    data = json.loads(_clean_json(raw))
     if isinstance(data, dict):
         data = [data]
     return [
@@ -158,7 +168,7 @@ Non aggiungere nulla oltre al JSON."""
             max_tokens=200,
         )
         raw = response.choices[0].message.content.strip()
-        data = json.loads(raw)
+        data = json.loads(_clean_json(raw))
         return Expense(
             date=data["date"],
             amount=float(data["amount"]),
