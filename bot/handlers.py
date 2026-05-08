@@ -9,7 +9,7 @@ from telegram.ext import (
     filters,
 )
 from services.transcribe import transcribe_audio, download_telegram_file
-from services.extract import extract_expense, apply_edit, Expense
+from services.extract import extract_expenses, extract_expense_from_image, apply_edit, Expense
 from services.sheets import append_expense
 from services.storage import get_users
 from services.config_store import get as cfg_get, set as cfg_set
@@ -18,16 +18,18 @@ logger = logging.getLogger(__name__)
 
 WAITING_CONFIRMATION = 1
 WAITING_EDIT = 2
-_PENDING_EXPENSE_KEY = "pending_expense"
+_PENDING_EXPENSES = "pending_expenses"  # list[Expense]
+_PENDING_IDX = "pending_idx"            # int
 
 
 def _is_authorized(update: Update) -> bool:
     return update.effective_user.id in get_users()
 
 
-def _expense_preview(expense: Expense) -> str:
+def _expense_preview(expense: Expense, idx: int = 0, total: int = 1) -> str:
+    prefix = f"*Spesa {idx + 1} di {total}:*\n\n" if total > 1 else ""
     return (
-        f"📝 *Ho capito questa spesa:*\n\n"
+        f"{prefix}📝 *Ho capito questa spesa:*\n\n"
         f"💶 Importo: *€{expense.amount:.2f}*\n"
         f"🏷️ Categoria: *{expense.category}*\n"
         f"📋 Descrizione: {expense.description}\n"
@@ -46,14 +48,20 @@ def _confirm_keyboard() -> InlineKeyboardMarkup:
     ])
 
 
+def _current_expense(context: ContextTypes.DEFAULT_TYPE) -> Expense | None:
+    expenses = context.user_data.get(_PENDING_EXPENSES, [])
+    idx = context.user_data.get(_PENDING_IDX, 0)
+    return expenses[idx] if 0 <= idx < len(expenses) else None
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not _is_authorized(update):
         return
     await update.message.reply_text(
-        "👋 Ciao! Inviami un messaggio vocale o scrivi la spesa.\n\n"
-        "Esempio: *ho speso 12 euro al bar* oppure manda una nota vocale.\n"
-        "Usa /help per vedere tutti i comandi."
-        , parse_mode="Markdown"
+        "👋 Ciao! Inviami un messaggio vocale, scrivi la spesa, o manda la foto di uno scontrino.\n\n"
+        "Esempio: *ho speso 12 euro al bar e 50 al supermercato*\n"
+        "Usa /help per vedere tutti i comandi.",
+        parse_mode="Markdown"
     )
 
 
@@ -84,10 +92,27 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
     return await _process_text(update, context, text)
 
 
-async def _process_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> int:
-    expense = extract_expense(text)
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if not _is_authorized(update):
+        return ConversationHandler.END
 
-    if expense is None:
+    await update.message.reply_text("📸 Sto analizzando lo scontrino...")
+
+    photo = update.message.photo[-1]  # highest resolution
+    tg_file = await photo.get_file()
+    image_bytes = await download_telegram_file(tg_file.file_path)
+
+    expenses = extract_expense_from_image(image_bytes)
+    return await _process_expenses(update, context, expenses)
+
+
+async def _process_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> int:
+    expenses = extract_expenses(text)
+    return await _process_expenses(update, context, expenses)
+
+
+async def _process_expenses(update: Update, context: ContextTypes.DEFAULT_TYPE, expenses: list) -> int:
+    if not expenses:
         await update.message.reply_text(
             "❓ Non sono riuscito a capire la spesa. Riprova con un messaggio più chiaro.\n"
             "Esempio: *ho speso 25 euro al supermercato*",
@@ -95,9 +120,11 @@ async def _process_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text
         )
         return ConversationHandler.END
 
-    context.user_data[_PENDING_EXPENSE_KEY] = expense
+    context.user_data[_PENDING_EXPENSES] = expenses
+    context.user_data[_PENDING_IDX] = 0
+
     await update.message.reply_text(
-        _expense_preview(expense),
+        _expense_preview(expenses[0], 0, len(expenses)),
         parse_mode="Markdown",
         reply_markup=_confirm_keyboard(),
     )
@@ -107,6 +134,11 @@ async def _process_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text
 async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+
+    expenses: list = context.user_data.get(_PENDING_EXPENSES, [])
+    idx: int = context.user_data.get(_PENDING_IDX, 0)
+    total = len(expenses)
+    expense: Expense | None = expenses[idx] if idx < total else None
 
     if query.data == "edit":
         await query.edit_message_text(
@@ -119,45 +151,66 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return WAITING_EDIT
 
-    expense: Expense | None = context.user_data.pop(_PENDING_EXPENSE_KEY, None)
-
     if query.data == "confirm" and expense:
         try:
             append_expense(expense)
             cfg_set("last_expense_date", expense.date)
 
-            # Budget check
-            from datetime import datetime
-            parsed = datetime.strptime(expense.date, "%Y-%m-%d")
-            budget = cfg_get("budget")
             budget_msg = ""
-            if budget:
-                from services.sheets import get_monthly_summary
-                summary = get_monthly_summary(parsed.year, parsed.month)
-                total = summary.get("_total", 0.0)
-                pct = (total / budget) * 100
-                if pct >= 100:
-                    budget_msg = f"\n\n🚨 *Budget superato!* Hai speso €{total:.2f} su €{budget:.0f} ({pct:.0f}%)"
-                elif pct >= 80:
-                    budget_msg = f"\n\n⚠️ Attenzione: hai usato l'*{pct:.0f}%* del budget (€{total:.2f} / €{budget:.0f})"
+            if idx + 1 >= total:
+                from datetime import datetime
+                parsed = datetime.strptime(expense.date, "%Y-%m-%d")
+                budget = cfg_get("budget")
+                if budget:
+                    from services.sheets import get_monthly_summary
+                    summary = get_monthly_summary(parsed.year, parsed.month)
+                    t = summary.get("_total", 0.0)
+                    pct = (t / budget) * 100
+                    if pct >= 100:
+                        budget_msg = f"\n\n🚨 *Budget superato!* Hai speso €{t:.2f} su €{budget:.0f} ({pct:.0f}%)"
+                    elif pct >= 80:
+                        budget_msg = f"\n\n⚠️ Attenzione: hai usato l'*{pct:.0f}%* del budget (€{t:.2f} / €{budget:.0f})"
 
-            await query.edit_message_text(
-                f"✅ *Spesa salvata!*\n\n"
-                f"€{expense.amount:.2f} — {expense.category}\n_{expense.description}_"
-                + budget_msg,
-                parse_mode="Markdown",
-            )
+            if total > 1:
+                await query.edit_message_text(
+                    f"✅ Spesa {idx + 1}/{total} salvata: €{expense.amount:.2f} — {expense.category}" + budget_msg,
+                    parse_mode="Markdown",
+                )
+            else:
+                await query.edit_message_text(
+                    f"✅ *Spesa salvata!*\n\n"
+                    f"€{expense.amount:.2f} — {expense.category}\n_{expense.description}_"
+                    + budget_msg,
+                    parse_mode="Markdown",
+                )
         except Exception as e:
             logger.error("Errore salvataggio: %s", e)
             await query.edit_message_text("⚠️ Errore nel salvataggio. Riprova.")
-    else:
-        await query.edit_message_text("❌ Operazione annullata.")
 
+    else:
+        if total > 1:
+            await query.edit_message_text(f"❌ Spesa {idx + 1}/{total} annullata.")
+        else:
+            await query.edit_message_text("❌ Operazione annullata.")
+
+    idx += 1
+    context.user_data[_PENDING_IDX] = idx
+
+    if idx < total:
+        await query.message.reply_text(
+            _expense_preview(expenses[idx], idx, total),
+            parse_mode="Markdown",
+            reply_markup=_confirm_keyboard(),
+        )
+        return WAITING_CONFIRMATION
+
+    context.user_data.pop(_PENDING_EXPENSES, None)
+    context.user_data.pop(_PENDING_IDX, None)
     return ConversationHandler.END
 
 
 async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    expense: Expense | None = context.user_data.get(_PENDING_EXPENSE_KEY)
+    expense = _current_expense(context)
     if not expense:
         await update.message.reply_text("❌ Nessuna spesa in attesa. Inizia da capo.")
         return ConversationHandler.END
@@ -171,9 +224,12 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return WAITING_EDIT
 
-    context.user_data[_PENDING_EXPENSE_KEY] = updated
+    expenses = context.user_data[_PENDING_EXPENSES]
+    idx = context.user_data[_PENDING_IDX]
+    expenses[idx] = updated
+
     await update.message.reply_text(
-        _expense_preview(updated),
+        _expense_preview(updated, idx, len(expenses)),
         parse_mode="Markdown",
         reply_markup=_confirm_keyboard(),
     )
@@ -181,7 +237,8 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
 
 async def handle_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    context.user_data.pop(_PENDING_EXPENSE_KEY, None)
+    context.user_data.pop(_PENDING_EXPENSES, None)
+    context.user_data.pop(_PENDING_IDX, None)
     if update.message:
         await update.message.reply_text("⏱️ Tempo scaduto. Invia di nuovo la spesa.")
     return ConversationHandler.END
@@ -190,6 +247,7 @@ async def handle_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 def build_conversation_handler() -> ConversationHandler:
     return ConversationHandler(
         entry_points=[
+            MessageHandler(filters.PHOTO, handle_photo),
             MessageHandler(filters.VOICE, handle_voice),
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text),
         ],

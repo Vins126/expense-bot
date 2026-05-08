@@ -1,4 +1,5 @@
 import json
+import base64
 from datetime import date, timedelta
 from dataclasses import dataclass
 from groq import Groq
@@ -20,33 +21,42 @@ CATEGORIES = [
 ]
 
 
-def _system_prompt() -> str:
+def _date_context() -> str:
     today = date.today()
     yesterday = today - timedelta(days=1)
     weekdays_it = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
-    # Last 7 days with their Italian names
     date_ref = "\n".join(
-        f"- '{weekdays_it[( today - timedelta(days=i)).weekday()]}' = {(today - timedelta(days=i)).isoformat()}"
+        f"- '{weekdays_it[(today - timedelta(days=i)).weekday()]}' = {(today - timedelta(days=i)).isoformat()}"
         for i in range(1, 8)
     )
+    return (
+        f"Data di oggi: {today.isoformat()} ({weekdays_it[today.weekday()]})\n"
+        f"Ieri: {yesterday.isoformat()}\n"
+        f"Riferimenti giorni della settimana:\n{date_ref}\n"
+        f"Categorie valide: {', '.join(CATEGORIES)}"
+    )
+
+
+def _multi_system_prompt() -> str:
+    today = date.today()
+    yesterday = today - timedelta(days=1)
     return f"""Sei un assistente per il tracciamento delle spese personali.
-Estrai le informazioni di una spesa dal testo italiano fornito dall'utente.
+Estrai TUTTE le spese presenti nel testo italiano dell'utente. Ci possono essere una o più spese.
 
-Data di oggi: {today.isoformat()} ({weekdays_it[today.weekday()]})
-Ieri: {yesterday.isoformat()}
+{_date_context()}
 
-Riferimenti giorni della settimana (usa SEMPRE la data esatta):
-{date_ref}
+Rispondi SOLO con un array JSON valido. Ogni elemento ha questi campi:
+- "date": data in formato YYYY-MM-DD
+- "amount": importo numerico in EUR (float)
+- "category": una delle categorie valide
+- "description": descrizione breve (max 50 caratteri)
 
-Rispondi SOLO con un oggetto JSON valido con questi campi:
-- "date": data in formato YYYY-MM-DD. Interpreta con precisione: "ieri" = {yesterday.isoformat()}, "l'altro ieri" = {(today - timedelta(days=2)).isoformat()}, giorni della settimana come da riferimento sopra, "il 3 maggio" = data del mese corrente o più recente
-- "amount": importo numerico in EUR (float, senza simbolo €)
-- "category": una delle seguenti categorie: {', '.join(CATEGORIES)}
-- "description": descrizione breve della spesa (max 50 caratteri)
+Se c'è una sola spesa, rispondi con un array di un solo elemento.
+Se non ci sono spese comprensibili, rispondi con [].
 
-Esempio: {{"date": "{today.isoformat()}", "amount": 35.50, "category": "Alimentari", "description": "Spesa al supermercato"}}
+Esempio con due spese: [{{"date": "{today.isoformat()}", "amount": 10.0, "category": "Ristoranti/Bar", "description": "Caffè al bar"}}, {{"date": "{today.isoformat()}", "amount": 50.0, "category": "Alimentari", "description": "Spesa supermercato"}}]
 
-Non aggiungere nulla oltre al JSON."""
+Non aggiungere nulla oltre all'array JSON."""
 
 
 @dataclass
@@ -57,31 +67,71 @@ class Expense:
     description: str
 
 
-def extract_expense(text: str) -> Expense | None:
+def _parse_expenses(raw: str) -> list[Expense]:
+    data = json.loads(raw)
+    if isinstance(data, dict):
+        data = [data]
+    return [
+        Expense(
+            date=item["date"],
+            amount=float(item["amount"]),
+            category=item["category"],
+            description=item["description"],
+        )
+        for item in data
+    ]
+
+
+def extract_expenses(text: str) -> list[Expense]:
     try:
         response = _client.chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[
-                {"role": "system", "content": _system_prompt()},
+                {"role": "system", "content": _multi_system_prompt()},
                 {"role": "user", "content": text},
             ],
             temperature=0.1,
-            max_tokens=200,
+            max_tokens=500,
         )
         raw = response.choices[0].message.content.strip()
-        data = json.loads(raw)
-        return Expense(
-            date=data["date"],
-            amount=float(data["amount"]),
-            category=data["category"],
-            description=data["description"],
-        )
+        return _parse_expenses(raw)
     except (json.JSONDecodeError, KeyError, ValueError):
-        return None
+        return []
+
+
+def extract_expense_from_image(image_bytes: bytes) -> list[Expense]:
+    today = date.today()
+    b64 = base64.b64encode(image_bytes).decode()
+    prompt = f"""Sei un assistente per il tracciamento delle spese personali.
+Analizza questo scontrino ed estrai le informazioni sulla spesa.
+{_date_context()}
+
+Rispondi SOLO con un array JSON. Ogni elemento ha: date, amount, category, description.
+Se non riesci a leggere lo scontrino, rispondi con [].
+Non aggiungere nulla oltre all'array JSON."""
+    try:
+        response = _client.chat.completions.create(
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            messages=[{
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
+                    },
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+            temperature=0.1,
+            max_tokens=500,
+        )
+        raw = response.choices[0].message.content.strip()
+        return _parse_expenses(raw)
+    except (json.JSONDecodeError, KeyError, ValueError):
+        return []
 
 
 def apply_edit(expense: Expense, edit_text: str) -> Expense | None:
-    """Applies a free-text modification to an existing expense using AI."""
     prompt = f"""Hai questa spesa registrata:
 - Data: {expense.date}
 - Importo: {expense.amount}
