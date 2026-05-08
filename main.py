@@ -15,7 +15,6 @@ from services.sheets import ensure_dashboard_sheet, ensure_charts_sheet
 from services.storage import initialize_users
 from services.config_store import load_config
 from services.scheduler import register_jobs
-import services.health as health
 
 _DATA_DIR = Path(__file__).parent / "data"
 _DATA_DIR.mkdir(exist_ok=True)
@@ -69,8 +68,6 @@ def main() -> None:
         initialize_users(AUTHORIZED_USER_IDS)
         ensure_dashboard_sheet()
         ensure_charts_sheet()
-        health.start(port=8080)
-        logger.info("Health check attivo su :8080/health")
 
         async def post_init(application: Application) -> None:
             await application.bot.set_my_commands([
