@@ -19,3 +19,4 @@ AUTHORIZED_USER_IDS: set[int] = {
     int(uid.strip())
     for uid in _require("AUTHORIZED_USER_IDS").split(",")
 }
+ADMIN_USER_ID: int = int(_require("ADMIN_USER_ID"))
