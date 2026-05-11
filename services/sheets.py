@@ -1,4 +1,5 @@
 import json
+import re as _re
 from datetime import datetime, date, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
@@ -44,7 +45,50 @@ def append_expense(expense: Expense) -> int:
     ]
     result = ws.append_row(row, value_input_option="USER_ENTERED")
     updates = result.get("updates", {})
-    return updates.get("updatedRange", "").split(":")[-1]
+    range_str = updates.get("updatedRange", "")
+    try:
+        return int(_re.search(r"\d+", range_str.split(":")[-1]).group())
+    except Exception:
+        return -1
+
+
+def append_income(expense: Expense) -> int:
+    gc = _get_client()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    try:
+        ws = sh.worksheet(_INCOME_SHEET)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=_INCOME_SHEET, rows=500, cols=5)
+        ws.append_row(["Data", "Importo (€)", "Descrizione", "Mese", "Anno"])
+
+    parsed_date = datetime.strptime(expense.date, "%Y-%m-%d")
+    row = [
+        parsed_date.strftime("%d/%m/%Y"),
+        expense.amount,
+        expense.description,
+        _MONTHS_IT[parsed_date.month],
+        parsed_date.year,
+    ]
+    result = ws.append_row(row, value_input_option="USER_ENTERED")
+    updates = result.get("updates", {})
+    range_str = updates.get("updatedRange", "")
+    try:
+        return int(_re.search(r"\d+", range_str.split(":")[-1]).group())
+    except Exception:
+        return -1
+
+
+def delete_row(sheet_name: str, row_num: int) -> bool:
+    if row_num <= 1:  # never delete header
+        return False
+    try:
+        gc = _get_client()
+        sh = gc.open_by_key(SPREADSHEET_ID)
+        ws = sh.worksheet(sheet_name)
+        ws.delete_rows(row_num)
+        return True
+    except Exception:
+        return False
 
 
 def get_monthly_summary(year: int, month: int) -> dict:
@@ -72,25 +116,6 @@ def get_monthly_summary(year: int, month: int) -> dict:
     result["_total"] = sum(result.values())
     return result
 
-
-def append_income(expense: Expense) -> None:
-    gc = _get_client()
-    sh = gc.open_by_key(SPREADSHEET_ID)
-    try:
-        ws = sh.worksheet(_INCOME_SHEET)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=_INCOME_SHEET, rows=500, cols=5)
-        ws.append_row(["Data", "Importo (€)", "Descrizione", "Mese", "Anno"])
-
-    parsed_date = datetime.strptime(expense.date, "%Y-%m-%d")
-    row = [
-        parsed_date.strftime("%d/%m/%Y"),
-        expense.amount,
-        expense.description,
-        _MONTHS_IT[parsed_date.month],
-        parsed_date.year,
-    ]
-    ws.append_row(row, value_input_option="USER_ENTERED")
 
 
 def get_monthly_income(year: int, month: int) -> float:
