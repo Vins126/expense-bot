@@ -3,13 +3,14 @@ from datetime import datetime, date, timedelta
 import gspread
 from google.oauth2.service_account import Credentials
 from config import GOOGLE_CREDENTIALS_JSON, SPREADSHEET_ID
-from services.extract import Expense
+from services.extract import Expense, CATEGORIES
 
 _SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets",
 ]
 
 _EXPENSE_SHEET = "Spese"
+_INCOME_SHEET = "Entrate"
 _MONTHS_IT = [
     "", "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
     "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
@@ -72,6 +73,58 @@ def get_monthly_summary(year: int, month: int) -> dict:
     return result
 
 
+def append_income(expense: Expense) -> None:
+    gc = _get_client()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    try:
+        ws = sh.worksheet(_INCOME_SHEET)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=_INCOME_SHEET, rows=500, cols=5)
+        ws.append_row(["Data", "Importo (€)", "Descrizione", "Mese", "Anno"])
+
+    parsed_date = datetime.strptime(expense.date, "%Y-%m-%d")
+    row = [
+        parsed_date.strftime("%d/%m/%Y"),
+        expense.amount,
+        expense.description,
+        _MONTHS_IT[parsed_date.month],
+        parsed_date.year,
+    ]
+    ws.append_row(row, value_input_option="USER_ENTERED")
+
+
+def get_monthly_income(year: int, month: int) -> float:
+    """Returns total income for the given month/year."""
+    gc = _get_client()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    try:
+        ws = sh.worksheet(_INCOME_SHEET)
+    except gspread.WorksheetNotFound:
+        return 0.0
+
+    month_it = _MONTHS_IT[month]
+    rows = ws.get_all_values()
+    total = 0.0
+    for row in rows[1:]:
+        if len(row) < 5:
+            continue
+        if row[3] == month_it and row[4] == str(year):
+            try:
+                total += float(str(row[1]).replace(",", "."))
+            except ValueError:
+                continue
+    return total
+
+
+def get_effective_budget(year: int, month: int) -> float | None:
+    """Returns monthly income if available, otherwise the manually-set budget."""
+    from services.config_store import get as cfg_get
+    income = get_monthly_income(year, month)
+    if income > 0:
+        return income
+    return cfg_get("budget")
+
+
 def get_weekly_summary() -> dict:
     """Returns {category: total, '_total': grand_total} for the last 7 days."""
     gc = _get_client()
@@ -99,6 +152,16 @@ def get_weekly_summary() -> dict:
     return result
 
 
+def ensure_income_sheet() -> None:
+    gc = _get_client()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    try:
+        sh.worksheet(_INCOME_SHEET)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=_INCOME_SHEET, rows=500, cols=5)
+        ws.append_row(["Data", "Importo (€)", "Descrizione", "Mese", "Anno"])
+
+
 def ensure_dashboard_sheet() -> None:
     gc = _get_client()
     sh = gc.open_by_key(SPREADSHEET_ID)
@@ -108,28 +171,53 @@ def ensure_dashboard_sheet() -> None:
         if ws.acell("A1").value:
             return
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title="Riepilogo", rows=30, cols=4)
+        ws = sh.add_worksheet(title="Riepilogo", rows=50, cols=4)
 
-    headers_cat = [["Categoria", "Totale (€)"]]
-    categories = [
-        "Alimentari", "Ristoranti/Bar", "Trasporti", "Abbigliamento",
-        "Salute/Farmacia", "Casa/Utenze", "Intrattenimento", "Bellezza",
-        "Regali", "Altro",
-    ]
-    rows_cat = [[c, f'=SUMIF(Spese!C:C;A{i+3};Spese!B:B)'] for i, c in enumerate(categories)]
+    rows_cat = [[c, f'=SUMIF(Spese!C:C;"{c}";Spese!B:B)'] for c in CATEGORIES]
     ws.update("A1", [["--- TOTALE PER CATEGORIA ---"]], value_input_option="USER_ENTERED")
-    ws.update("A2", headers_cat, value_input_option="USER_ENTERED")
+    ws.update("A2", [["Categoria", "Totale (€)"]], value_input_option="USER_ENTERED")
     ws.update("A3", rows_cat, value_input_option="USER_ENTERED")
 
-    month_start = len(categories) + 4
+    month_start = len(CATEGORIES) + 4
     ws.update(f"A{month_start}", [["--- TOTALE PER MESE ---"]], value_input_option="USER_ENTERED")
     ws.update(f"A{month_start+1}", [["Mese", "Totale (€)"]], value_input_option="USER_ENTERED")
     months = [
         "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
         "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
     ]
-    rows_month = [[m, f'=SUMIF(Spese!E:E;A{month_start+2+i};Spese!B:B)'] for i, m in enumerate(months)]
+    rows_month = [[m, f'=SUMIF(Spese!E:E;"{m}";Spese!B:B)'] for m in months]
     ws.update(f"A{month_start+2}", rows_month, value_input_option="USER_ENTERED")
+
+
+def sync_dashboard_categories() -> None:
+    """Adds any missing CATEGORIES rows to the Riepilogo sheet."""
+    gc = _get_client()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    try:
+        ws = sh.worksheet("Riepilogo")
+    except gspread.WorksheetNotFound:
+        return
+
+    col_a = ws.col_values(1)
+    existing_cats: set[str] = set()
+    month_section_row: int | None = None
+    skip_values = {"--- TOTALE PER CATEGORIA ---", "--- TOTALE PER MESE ---", "Categoria", "Mese", ""}
+    for i, val in enumerate(col_a):
+        if val == "--- TOTALE PER MESE ---":
+            month_section_row = i + 1  # 1-indexed
+            break
+        if val and val not in skip_values:
+            existing_cats.add(val)
+
+    if month_section_row is None:
+        return
+
+    missing = [c for c in CATEGORIES if c not in existing_cats]
+    if not missing:
+        return
+
+    rows_to_insert = [[c, f'=SUMIF(Spese!C:C;"{c}";Spese!B:B)'] for c in missing]
+    ws.insert_rows(rows_to_insert, row=month_section_row, value_input_option="USER_ENTERED")
 
 
 def ensure_charts_sheet() -> None:

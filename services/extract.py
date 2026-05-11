@@ -13,11 +13,18 @@ CATEGORIES = [
     "Ristoranti/Bar",
     "Trasporti",
     "Abbigliamento",
-    "Salute/Farmacia",
+    "Salute",
+    "Farmacia",
+    "Psicologa",
     "Casa/Utenze",
+    "Costi Fissi",
     "Intrattenimento",
     "Bellezza",
     "Regali",
+    "Action",
+    "Oasi",
+    "EuroSpin",
+    "Acqua e Sapone",
     "Altro",
 ]
 
@@ -40,22 +47,27 @@ def _date_context() -> str:
 
 def _multi_system_prompt() -> str:
     today = date.today()
-    yesterday = today - timedelta(days=1)
-    return f"""Sei un assistente per il tracciamento delle spese personali.
-Estrai TUTTE le spese presenti nel testo italiano dell'utente. Ci possono essere una o più spese.
+    return f"""Sei un assistente per il tracciamento delle finanze personali.
+Estrai TUTTE le voci presenti nel testo italiano dell'utente. Possono essere spese O entrate (stipendio, rimborsi, guadagni ricevuti).
 
 {_date_context()}
 
+Note sulle categorie:
+- Action, Pepco e Tedi → categoria "Action"
+- Acquisti in farmacia/medicinali → categoria "Farmacia" (non "Salute")
+- Sedute di psicologia/psicologa → categoria "Psicologa"
+
 Rispondi SOLO con un array JSON valido. Ogni elemento ha questi campi:
 - "date": data in formato YYYY-MM-DD
-- "amount": importo numerico in EUR (float)
-- "category": una delle categorie valide
+- "amount": importo numerico in EUR (float, sempre positivo)
+- "category": una delle categorie valide (solo per spese; per entrate usa "Entrata")
 - "description": descrizione breve (max 50 caratteri)
+- "type": "spesa" per le spese, "entrata" per guadagni/stipendio/rimborsi ricevuti
 
-Se c'è una sola spesa, rispondi con un array di un solo elemento.
-Se non ci sono spese comprensibili, rispondi con [].
+Se c'è una sola voce, rispondi con un array di un solo elemento.
+Se non ci sono voci comprensibili, rispondi con [].
 
-Esempio con due spese: [{{"date": "{today.isoformat()}", "amount": 10.0, "category": "Ristoranti/Bar", "description": "Caffè al bar"}}, {{"date": "{today.isoformat()}", "amount": 50.0, "category": "Alimentari", "description": "Spesa supermercato"}}]
+Esempio con spesa e entrata: [{{"date": "{today.isoformat()}", "amount": 10.0, "category": "Ristoranti/Bar", "description": "Caffè al bar", "type": "spesa"}}, {{"date": "{today.isoformat()}", "amount": 1500.0, "category": "Entrata", "description": "Stipendio maggio", "type": "entrata"}}]
 
 Non aggiungere nulla oltre all'array JSON."""
 
@@ -66,6 +78,7 @@ class Expense:
     amount: float
     category: str
     description: str
+    type: str = "spesa"  # "spesa" | "entrata"
 
 
 def _clean_json(raw: str) -> str:
@@ -85,8 +98,9 @@ def _parse_expenses(raw: str) -> list[Expense]:
         Expense(
             date=item["date"],
             amount=float(item["amount"]),
-            category=item["category"],
+            category=item.get("category", "Altro"),
             description=item["description"],
+            type=item.get("type", "spesa"),
         )
         for item in data
     ]
@@ -174,6 +188,7 @@ Non aggiungere nulla oltre al JSON."""
             amount=float(data["amount"]),
             category=data["category"],
             description=data["description"],
+            type=expense.type,
         )
     except (json.JSONDecodeError, KeyError, ValueError):
         return None

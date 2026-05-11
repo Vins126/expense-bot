@@ -1,9 +1,9 @@
 import logging
 from datetime import datetime, date, timedelta, time, timezone
 from telegram.ext import ContextTypes
-from services.sheets import get_monthly_summary, get_weekly_summary
+from services.sheets import get_monthly_summary, get_weekly_summary, get_effective_budget, append_expense
 from services.storage import get_users
-from services.config_store import get, set as cfg_set
+from services.config_store import get
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,10 @@ async def weekly_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def monthly_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Invio riepilogo mensile")
+
+    # Auto-log recurring fixed costs due this month
+    await _process_recurring_costs(context)
+
     prev = date.today().replace(day=1) - timedelta(days=1)
     summary = get_monthly_summary(prev.year, prev.month)
     month_names = [
@@ -41,12 +45,12 @@ async def monthly_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
         "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
     ]
 
-    budget = get("budget")
     total = summary.get("_total", 0.0)
+    budget = get_effective_budget(prev.year, prev.month)
     budget_line = ""
     if budget:
         pct = (total / budget) * 100
-        budget_line = f"\n📌 Budget mensile: €{budget:.0f} — usato {pct:.0f}%"
+        budget_line = f"\n📌 Budget: €{budget:.0f} — usato {pct:.0f}%"
 
     text = _format_summary(summary, f"📅 *Riepilogo {month_names[prev.month]} {prev.year}*") + budget_line
     for user_id in get_users():
@@ -54,6 +58,46 @@ async def monthly_summary(context: ContextTypes.DEFAULT_TYPE) -> None:
             await context.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
         except Exception as e:
             logger.warning("Impossibile inviare a %s: %s", user_id, e)
+
+
+async def _process_recurring_costs(context: ContextTypes.DEFAULT_TYPE) -> None:
+    from services.recurring import get_due, advance, update_item
+    from services.extract import Expense
+
+    today = date.today()
+    due_items = get_due(today)
+    if not due_items:
+        return
+
+    logged = []
+    for item in due_items:
+        try:
+            expense = Expense(
+                date=item.next_due,
+                amount=item.amount,
+                category="Costi Fissi",
+                description=item.description,
+            )
+            append_expense(expense)
+            update_item(advance(item))
+            logged.append(item)
+            logger.info("Costo fisso auto-registrato: %s €%.2f", item.description, item.amount)
+        except Exception as e:
+            logger.error("Errore registrazione costo fisso %s: %s", item.description, e)
+
+    if not logged:
+        return
+
+    lines = ["💳 *Costi fissi registrati automaticamente:*\n"]
+    for item in logged:
+        lines.append(f"• €{item.amount:.2f} — {item.description}")
+    text = "\n".join(lines)
+
+    for user_id in get_users():
+        try:
+            await context.bot.send_message(chat_id=user_id, text=text, parse_mode="Markdown")
+        except Exception as e:
+            logger.warning("Impossibile inviare notifica costi fissi a %s: %s", user_id, e)
 
 
 async def inactivity_check(context: ContextTypes.DEFAULT_TYPE) -> None:

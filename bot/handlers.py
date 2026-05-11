@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ContextTypes,
@@ -10,9 +11,9 @@ from telegram.ext import (
 )
 from services.transcribe import transcribe_audio, download_telegram_file
 from services.extract import extract_expenses, extract_expense_from_image, apply_edit, Expense
-from services.sheets import append_expense
+from services.sheets import append_expense, append_income, get_effective_budget
 from services.storage import get_users
-from services.config_store import get as cfg_get, set as cfg_set
+from services.config_store import set as cfg_set
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,16 @@ def _is_authorized(update: Update) -> bool:
     return update.effective_user.id in get_users()
 
 
-def _expense_preview(expense: Expense, idx: int = 0, total: int = 1) -> str:
-    prefix = f"*Spesa {idx + 1} di {total}:*\n\n" if total > 1 else ""
+def _entry_preview(expense: Expense, idx: int = 0, total: int = 1) -> str:
+    prefix = f"*{'Entrata' if expense.type == 'entrata' else 'Spesa'} {idx + 1} di {total}:*\n\n" if total > 1 else ""
+    if expense.type == "entrata":
+        return (
+            f"{prefix}💰 *Ho capito questa entrata:*\n\n"
+            f"💶 Importo: *€{expense.amount:.2f}*\n"
+            f"📋 Descrizione: {expense.description}\n"
+            f"📅 Data: {expense.date}\n\n"
+            f"Confermo?"
+        )
     return (
         f"{prefix}📝 *Ho capito questa spesa:*\n\n"
         f"💶 Importo: *€{expense.amount:.2f}*\n"
@@ -60,6 +69,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "👋 Ciao! Inviami un messaggio vocale, scrivi la spesa, o manda la foto di uno scontrino.\n\n"
         "Esempio: *ho speso 12 euro al bar e 50 al supermercato*\n"
+        "Oppure: *ho ricevuto 1500 euro di stipendio*\n"
         "Usa /help per vedere tutti i comandi.",
         parse_mode="Markdown"
     )
@@ -114,8 +124,9 @@ async def _process_text(update: Update, context: ContextTypes.DEFAULT_TYPE, text
 async def _process_expenses(update: Update, context: ContextTypes.DEFAULT_TYPE, expenses: list) -> int:
     if not expenses:
         await update.message.reply_text(
-            "❓ Non sono riuscito a capire la spesa. Riprova con un messaggio più chiaro.\n"
-            "Esempio: *ho speso 25 euro al supermercato*",
+            "❓ Non sono riuscito a capire la voce. Riprova con un messaggio più chiaro.\n"
+            "Esempio spesa: *ho speso 25 euro al supermercato*\n"
+            "Esempio entrata: *ho ricevuto 1500 euro di stipendio*",
             parse_mode="Markdown",
         )
         return ConversationHandler.END
@@ -124,7 +135,7 @@ async def _process_expenses(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     context.user_data[_PENDING_IDX] = 0
 
     await update.message.reply_text(
-        _expense_preview(expenses[0], 0, len(expenses)),
+        _entry_preview(expenses[0], 0, len(expenses)),
         parse_mode="Markdown",
         reply_markup=_confirm_keyboard(),
     )
@@ -141,47 +152,69 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
     expense: Expense | None = expenses[idx] if idx < total else None
 
     if query.data == "edit":
-        await query.edit_message_text(
-            "✏️ Cosa vuoi modificare?\n\n"
-            "Scrivi ad esempio:\n"
-            "• _importo 25_\n"
-            "• _categoria Trasporti_\n"
-            "• _descrizione Spesa Lidl_\n"
-            "• _data ieri_",
-            parse_mode="Markdown",
-        )
+        if expense and expense.type == "entrata":
+            await query.edit_message_text(
+                "✏️ Cosa vuoi modificare?\n\n"
+                "Scrivi ad esempio:\n"
+                "• _importo 1500_\n"
+                "• _descrizione Stipendio maggio_\n"
+                "• _data ieri_",
+                parse_mode="Markdown",
+            )
+        else:
+            await query.edit_message_text(
+                "✏️ Cosa vuoi modificare?\n\n"
+                "Scrivi ad esempio:\n"
+                "• _importo 25_\n"
+                "• _categoria Trasporti_\n"
+                "• _descrizione Spesa Lidl_\n"
+                "• _data ieri_",
+                parse_mode="Markdown",
+            )
         return WAITING_EDIT
 
     if query.data == "confirm" and expense:
         try:
-            append_expense(expense)
-            cfg_set("last_expense_date", expense.date)
+            is_income = expense.type == "entrata"
+            if is_income:
+                append_income(expense)
+            else:
+                append_expense(expense)
+                cfg_set("last_expense_date", expense.date)
 
             budget_msg = ""
             if idx + 1 >= total:
-                from datetime import datetime
                 parsed = datetime.strptime(expense.date, "%Y-%m-%d")
-                budget = cfg_get("budget")
-                if budget:
+                if is_income:
+                    budget_msg = f"\n\n📌 Budget di {parsed.strftime('%B')} aggiornato automaticamente a *€{expense.amount:.2f}*"
+                else:
                     from services.sheets import get_monthly_summary
-                    summary = get_monthly_summary(parsed.year, parsed.month)
-                    t = summary.get("_total", 0.0)
-                    pct = (t / budget) * 100
-                    if pct >= 100:
-                        budget_msg = f"\n\n🚨 *Budget superato!* Hai speso €{t:.2f} su €{budget:.0f} ({pct:.0f}%)"
-                    elif pct >= 80:
-                        budget_msg = f"\n\n⚠️ Attenzione: hai usato l'*{pct:.0f}%* del budget (€{t:.2f} / €{budget:.0f})"
+                    budget = get_effective_budget(parsed.year, parsed.month)
+                    if budget:
+                        summary = get_monthly_summary(parsed.year, parsed.month)
+                        t = summary.get("_total", 0.0)
+                        pct = (t / budget) * 100
+                        if pct >= 100:
+                            budget_msg = f"\n\n🚨 *Budget superato!* Hai speso €{t:.2f} su €{budget:.0f} ({pct:.0f}%)"
+                        elif pct >= 80:
+                            budget_msg = f"\n\n⚠️ Attenzione: hai usato l'*{pct:.0f}%* del budget (€{t:.2f} / €{budget:.0f})"
+
+            if is_income:
+                label = "Entrata"
+                emoji = "💰"
+            else:
+                label = "Spesa"
+                emoji = "✅"
 
             if total > 1:
                 await query.edit_message_text(
-                    f"✅ Spesa {idx + 1}/{total} salvata: €{expense.amount:.2f} — {expense.category}" + budget_msg,
+                    f"{emoji} {label} {idx + 1}/{total} salvata: €{expense.amount:.2f} — {expense.description}" + budget_msg,
                     parse_mode="Markdown",
                 )
             else:
+                detail = f"€{expense.amount:.2f} — {expense.description if is_income else expense.category}\n_{expense.description}_" if not is_income else f"€{expense.amount:.2f} — {expense.description}"
                 await query.edit_message_text(
-                    f"✅ *Spesa salvata!*\n\n"
-                    f"€{expense.amount:.2f} — {expense.category}\n_{expense.description}_"
-                    + budget_msg,
+                    f"{emoji} *{label} salvata!*\n\n{detail}" + budget_msg,
                     parse_mode="Markdown",
                 )
         except Exception as e:
@@ -189,8 +222,9 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
             await query.edit_message_text("⚠️ Errore nel salvataggio. Riprova.")
 
     else:
+        label = "Entrata" if (expense and expense.type == "entrata") else "Spesa"
         if total > 1:
-            await query.edit_message_text(f"❌ Spesa {idx + 1}/{total} annullata.")
+            await query.edit_message_text(f"❌ {label} {idx + 1}/{total} annullata.")
         else:
             await query.edit_message_text("❌ Operazione annullata.")
 
@@ -199,7 +233,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     if idx < total:
         await query.message.reply_text(
-            _expense_preview(expenses[idx], idx, total),
+            _entry_preview(expenses[idx], idx, total),
             parse_mode="Markdown",
             reply_markup=_confirm_keyboard(),
         )
@@ -213,7 +247,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     expense = _current_expense(context)
     if not expense:
-        await update.message.reply_text("❌ Nessuna spesa in attesa. Inizia da capo.")
+        await update.message.reply_text("❌ Nessuna voce in attesa. Inizia da capo.")
         return ConversationHandler.END
 
     edit_text = update.message.text.strip()
@@ -230,7 +264,7 @@ async def handle_edit_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     expenses[idx] = updated
 
     await update.message.reply_text(
-        _expense_preview(updated, idx, len(expenses)),
+        _entry_preview(updated, idx, len(expenses)),
         parse_mode="Markdown",
         reply_markup=_confirm_keyboard(),
     )
@@ -241,7 +275,7 @@ async def handle_timeout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     context.user_data.pop(_PENDING_EXPENSES, None)
     context.user_data.pop(_PENDING_IDX, None)
     if update.message:
-        await update.message.reply_text("⏱️ Tempo scaduto. Invia di nuovo la spesa.")
+        await update.message.reply_text("⏱️ Tempo scaduto. Invia di nuovo la voce.")
     return ConversationHandler.END
 
 
