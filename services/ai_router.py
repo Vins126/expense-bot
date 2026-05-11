@@ -18,8 +18,9 @@ INTENTI DISPONIBILI:
   Trigger: "quanto ho speso", "riepilogo", "saldo", "totale mese", "cosa ho speso questo mese", ecc.
 
 "aggiungi_ricorrente" — aggiungere un costo fisso ricorrente
-  params: {"amount": float, "description": str, "interval_months": int}
-  interval_months default 1. Trigger: "aggiungi [nome] ogni [N] mesi", "abbonamento", "costo fisso", ecc.
+  params: {"amount": float, "description": str, "interval_months": int, "start_date"?: "YYYY-MM-01"}
+  interval_months default 1. start_date: solo se l'utente specifica un mese di partenza passato (es. "da gennaio", "a partire da marzo 2026"). Formato: primo giorno del mese specificato in YYYY-MM-01. Anno corrente: 2026.
+  Trigger: "aggiungi [nome] ogni [N] mesi", "abbonamento", "costo fisso", "pago da [mese]", ecc.
 
 "lista_ricorrente" — vedere la lista dei costi fissi configurati
   params: {}

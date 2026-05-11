@@ -31,16 +31,24 @@ def save(items: list[RecurringItem]) -> None:
 
 
 def add(amount: float, description: str, interval_months: int = 1, start_date: date | None = None) -> RecurringItem:
+    today = date.today()
+    today_first = today.replace(day=1)
+
     if start_date is None:
-        today = date.today()
-        # next_due = first day of next month
-        start_date = (today.replace(day=1) + relativedelta(months=1))
+        # Default: start next month
+        next_due = today_first + relativedelta(months=1)
+    else:
+        # Advance from start_date (1st of that month) until we reach current or future cycle
+        next_due = start_date.replace(day=1)
+        while next_due < today_first:
+            next_due += relativedelta(months=interval_months)
+
     item = RecurringItem(
         id=str(uuid.uuid4())[:8],
         amount=amount,
         description=description,
         interval_months=interval_months,
-        next_due=start_date.isoformat(),
+        next_due=next_due.isoformat(),
     )
     items = load()
     items.append(item)

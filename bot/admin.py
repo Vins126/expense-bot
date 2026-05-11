@@ -272,7 +272,7 @@ async def cmd_ricorrente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(f"⚠️ ID `{item_id}` non trovato.", parse_mode="Markdown")
         return
 
-    # /ricorrente <importo> <descrizione...> [mesi]
+    # /ricorrente <importo> <descrizione...> [mesi] [da YYYY-MM]
     if len(args) >= 2:
         try:
             amount = float(args[0].replace(",", "."))
@@ -280,27 +280,58 @@ async def cmd_ricorrente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("Importo non valido. Esempio: /ricorrente 9.99 Spotify 4")
             return
 
-        # Last arg is interval if it's a number, else default to 1
-        interval = 1
-        desc_args = args[1:]
-        if desc_args and desc_args[-1].isdigit():
-            interval = int(desc_args[-1])
-            desc_args = desc_args[:-1]
+        remaining = args[1:]
 
-        description = " ".join(desc_args).strip()
+        # Extract optional "da YYYY-MM" at the end
+        start_date = None
+        if len(remaining) >= 2 and remaining[-2].lower() == "da":
+            try:
+                from datetime import date as _date
+                start_date = _date.fromisoformat(remaining[-1] + "-01")
+                remaining = remaining[:-2]
+            except ValueError:
+                pass
+
+        # Last arg is interval if it's a number
+        interval = 1
+        if remaining and remaining[-1].isdigit():
+            interval = int(remaining[-1])
+            remaining = remaining[:-1]
+
+        description = " ".join(remaining).strip()
         if not description:
             await update.message.reply_text("Descrizione mancante. Esempio: /ricorrente 9.99 Spotify 4")
             return
 
-        item = add(amount, description, interval)
+        item = add(amount, description, interval, start_date)
         interval_str = f"ogni {interval} mesi" if interval > 1 else "mensile"
-        await update.message.reply_text(
+
+        # Auto-log if already due
+        from datetime import date as _date2
+        auto_logged = False
+        if _date2.fromisoformat(item.next_due) <= _date2.today():
+            try:
+                from services.sheets import append_expense
+                from services.extract import Expense
+                from services.recurring import advance, update_item, load
+                exp = Expense(date=item.next_due, amount=item.amount,
+                              category="Costi Fissi", description=item.description)
+                append_expense(exp)
+                update_item(advance(item))
+                item = next((i for i in load() if i.id == item.id), item)
+                auto_logged = True
+            except Exception as e:
+                logger.error("Errore auto-log: %s", e)
+
+        msg = (
             f"✅ Costo fisso aggiunto:\n"
             f"• €{amount:.2f} — {description} ({interval_str})\n"
             f"• ID: `{item.id}`\n"
-            f"• Prima scadenza: {item.next_due}",
-            parse_mode="Markdown",
         )
+        if auto_logged:
+            msg += "• ✅ Ciclo corrente registrato automaticamente in Sheets\n"
+        msg += f"• Prossima scadenza: {item.next_due}"
+        await update.message.reply_text(msg, parse_mode="Markdown")
         return
 
     # /ricorrente → lista

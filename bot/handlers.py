@@ -149,13 +149,44 @@ async def _dispatch_ai(update: Update, context: ContextTypes.DEFAULT_TYPE, text:
                 parse_mode="Markdown",
             )
             return ConversationHandler.END
-        item = add_recurring(float(amount), description, interval)
+
+        start_date = None
+        raw_start = params.get("start_date")
+        if raw_start:
+            try:
+                start_date = _date.fromisoformat(raw_start)
+            except ValueError:
+                pass
+
+        item = add_recurring(float(amount), description, interval, start_date)
         interval_str = f"ogni {interval} mesi" if interval > 1 else "ogni mese"
-        await update.message.reply_text(
+
+        # If next_due is today or earlier, auto-log the current cycle immediately
+        auto_logged = False
+        if _date.fromisoformat(item.next_due) <= _date.today():
+            try:
+                from services.sheets import append_expense
+                from services.extract import Expense as _Expense
+                from services.recurring import advance as _advance, update_item as _update_item
+                exp = _Expense(date=item.next_due, amount=item.amount,
+                               category="Costi Fissi", description=item.description)
+                append_expense(exp)
+                _update_item(_advance(item))
+                # Reload item to get updated next_due
+                from services.recurring import load as _load
+                item = next((i for i in _load() if i.id == item.id), item)
+                auto_logged = True
+            except Exception as e:
+                logger.error("Errore auto-log ricorrente: %s", e)
+
+        msg = (
             f"✅ Costo fisso aggiunto:\n"
             f"• €{float(amount):.2f} — {description} ({interval_str})\n"
-            f"• Prima scadenza: {item.next_due}",
         )
+        if auto_logged:
+            msg += f"• ✅ Pagamento del ciclo corrente registrato automaticamente in Sheets\n"
+        msg += f"• Prossima scadenza: {item.next_due}"
+        await update.message.reply_text(msg)
         return ConversationHandler.END
 
     # --- Lista costi fissi ---
