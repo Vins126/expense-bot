@@ -52,6 +52,44 @@ Puoi premere ✏️ *Modifica* per correggere importo o categoria.
 """.strip()
 
 
+_INFO_TEXT = """
+📖 *Guida al bot spese*
+
+*Come registrare una spesa:*
+Scrivi liberamente oppure invia una nota vocale:
+• _"ho speso 25 euro al supermercato"_
+• _"12€ caffè al bar"_
+• _"ieri 50 euro all'Oasi"_
+Puoi anche mandare la *foto di uno scontrino* — il bot legge automaticamente i prezzi.
+
+*Come registrare un'entrata:*
+• _"ho ricevuto 1500 euro di stipendio"_
+Le entrate diventano il budget del mese automaticamente.
+
+*Conferma della spesa:*
+Il bot mostra sempre un riepilogo prima di salvare. Hai tre opzioni:
+✅ *Sì* — salva
+✏️ *Modifica* — correggi importo, categoria, descrizione o data \\(es. "importo 30" o "categoria Trasporti"\\)
+❌ *No* — annulla
+
+*Categorie disponibili:*
+Ristoranti/Bar · Trasporti · Abbigliamento · Salute/Farmacia · Psicologa · Costi Fissi · Action · Oasi · EuroSpin · Acqua e Sapone · Altro
+Il bot riconosce automaticamente il negozio o il tipo di spesa.
+
+*Costi fissi ricorrenti \\(/ricorrente\\):*
+Spese che si ripetono ogni mese o ogni N mesi \\(es. Spotify ogni 4 mesi\\).
+Vengono registrati automaticamente il 1° del mese e ricevi una notifica.
+• `/ricorrente` — vedi la lista
+• `/ricorrente 9.99 Spotify 4` — aggiunge €9.99 ogni 4 mesi
+• `/ricorrente 30 WiFi TIM` — aggiunge €30 ogni mese
+• `/ricorrente del <id>` — rimuovi un costo fisso
+
+*/riepilogo* — spese del mese corrente per categoria + saldo \\(entrate − spese\\)
+*/budget <importo>* — imposta un budget mensile fisso \\(usato solo se non hai registrato entrate\\)
+*/info* — questa guida
+""".strip()
+
+
 def _is_admin(update: Update) -> bool:
     return update.effective_user.id == ADMIN_USER_ID
 
@@ -281,6 +319,12 @@ async def cmd_ricorrente(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         lines.append(f"• `{item.id}` — €{item.amount:.2f} {item.description} ({interval_str})\n  Prossima: {item.next_due}")
     lines.append("\nPer rimuovere: /ricorrente del <id>")
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def cmd_info(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.effective_user.id not in get_users():
+        return
+    await update.message.reply_text(_INFO_TEXT, parse_mode="MarkdownV2")
 
 
 async def cmd_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

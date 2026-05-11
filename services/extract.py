@@ -9,17 +9,12 @@ from config import GROQ_API_KEY
 _client = Groq(api_key=GROQ_API_KEY)
 
 CATEGORIES = [
-    "Alimentari",
     "Ristoranti/Bar",
     "Trasporti",
     "Abbigliamento",
     "Salute/Farmacia",
     "Psicologa",
-    "Casa/Utenze",
     "Costi Fissi",
-    "Intrattenimento",
-    "Bellezza",
-    "Regali",
     "Action",
     "Oasi",
     "EuroSpin",
@@ -55,6 +50,10 @@ Note sulle categorie:
 - Action, Pepco e Tedi → categoria "Action"
 - Acquisti in farmacia, medicinali, visite mediche → categoria "Salute/Farmacia"
 - Sedute di psicologia/psicologa → categoria "Psicologa"
+- Riconosci il supermercato Eurospin e assegna categoria "EuroSpin"
+- Riconosci il supermercato Oasi e assegna categoria "Oasi"
+- Riconosci il supermercato Acqua e Sapone e assegna categoria "Acqua e Sapone"
+- Se il supermercato è generico e non specificato inserisci "EuroSpin"
 
 Rispondi SOLO con un array JSON valido. Ogni elemento ha questi campi:
 - "date": data in formato YYYY-MM-DD

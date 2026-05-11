@@ -242,7 +242,7 @@ def ensure_balance_section() -> None:
         return
 
     col_a = ws.col_values(1)
-    if "--- SALDO MENSILE ---" in col_a:
+    if any("--- SALDO MENSILE" in v for v in col_a):
         return
 
     balance_start = len(col_a) + 2  # one blank row gap
@@ -261,6 +261,35 @@ def ensure_balance_section() -> None:
             f'=B{row_num}-C{row_num}',
         ])
     ws.update(f"A{data_start}", rows, value_input_option="USER_ENTERED")
+
+
+def ensure_monthly_category_sheet() -> None:
+    """Creates/updates the 'Mensile x Cat' sheet with a category × month breakdown table."""
+    gc = _get_client()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+
+    try:
+        ws = sh.worksheet("Mensile x Cat")
+        # Already exists — rebuild header row in case categories changed
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title="Mensile x Cat", rows=len(CATEGORIES) + 3, cols=14)
+
+    short_months = ["Gen", "Feb", "Mar", "Apr", "Mag", "Giu", "Lug", "Ago", "Set", "Ott", "Nov", "Dic"]
+    header = ["Categoria"] + short_months + ["Totale Anno"]
+    ws.update("A1", [header], value_input_option="USER_ENTERED")
+
+    data_rows = []
+    for i, cat in enumerate(CATEGORIES):
+        row_num = i + 2  # data starts at row 2
+        month_formulas = [
+            f'=SUMIFS(Spese!B:B;Spese!C:C;"{cat}";Spese!E:E;"{month}")'
+            for month in _MONTHS
+        ]
+        total_col = chr(ord("B") + len(_MONTHS))  # "N"
+        total_formula = f'=SUM(B{row_num}:{chr(ord("B") + len(_MONTHS) - 1)}{row_num})'
+        data_rows.append([cat] + month_formulas + [total_formula])
+
+    ws.update("A2", data_rows, value_input_option="USER_ENTERED")
 
 
 def ensure_charts_sheet() -> None:

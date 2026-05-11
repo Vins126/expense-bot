@@ -9,9 +9,9 @@ from config import BOT_TOKEN, AUTHORIZED_USER_IDS
 from bot.handlers import build_conversation_handler, start
 from bot.admin import (
     cmd_adduser, cmd_removeuser, cmd_listusers, cmd_logs,
-    cmd_status, cmd_help, cmd_budget, cmd_riepilogo, cmd_broadcast, cmd_ricorrente,
+    cmd_status, cmd_help, cmd_budget, cmd_riepilogo, cmd_broadcast, cmd_ricorrente, cmd_info,
 )
-from services.sheets import ensure_dashboard_sheet, ensure_charts_sheet, ensure_income_sheet, sync_dashboard_categories, ensure_balance_section
+from services.sheets import ensure_dashboard_sheet, ensure_charts_sheet, ensure_income_sheet, sync_dashboard_categories, ensure_balance_section, ensure_monthly_category_sheet
 from services.storage import initialize_users
 from services.config_store import load_config
 from services.scheduler import register_jobs
@@ -63,21 +63,23 @@ def _release_pid_lock() -> None:
 def main() -> None:
     _acquire_pid_lock()
     try:
-        logger.info("Avvio bot spese v1.4.0...")
+        logger.info("Avvio bot spese v1.5.0...")
         load_config()
         initialize_users(AUTHORIZED_USER_IDS)
         ensure_dashboard_sheet()
         sync_dashboard_categories()
         ensure_income_sheet()
         ensure_balance_section()
+        ensure_monthly_category_sheet()
         ensure_charts_sheet()
 
         async def post_init(application: Application) -> None:
             await application.bot.set_my_commands([
-                BotCommand("help", "Lista comandi"),
+                BotCommand("info", "Come usare il bot (tutorial)"),
                 BotCommand("riepilogo", "Spese, entrate e saldo del mese"),
-                BotCommand("budget", "Imposta budget mensile di fallback"),
                 BotCommand("ricorrente", "Gestisci costi fissi ricorrenti"),
+                BotCommand("budget", "Imposta budget mensile di fallback"),
+                BotCommand("help", "Lista comandi admin"),
                 BotCommand("status", "Stato e uptime del bot"),
                 BotCommand("listusers", "Utenti autorizzati"),
                 BotCommand("adduser", "Aggiungi utente: /adduser <id>"),
@@ -99,6 +101,7 @@ def main() -> None:
         app.add_handler(CommandHandler("logs", cmd_logs))
         app.add_handler(CommandHandler("status", cmd_status))
         app.add_handler(CommandHandler("ricorrente", cmd_ricorrente))
+        app.add_handler(CommandHandler("info", cmd_info))
         app.add_handler(build_conversation_handler())
 
         register_jobs(app)
