@@ -178,7 +178,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"🟢 Online da: {hours}h {minutes}m\n"
         f"👥 Utenti autorizzati: {len(users)}"
         + budget_line +
-        f"\n📦 Versione: v1.4.0",
+        f"\n📦 Versione: v1.6.0",
         parse_mode="Markdown",
     )
 

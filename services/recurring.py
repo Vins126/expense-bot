@@ -35,8 +35,8 @@ def add(amount: float, description: str, interval_months: int = 1, start_date: d
     today_first = today.replace(day=1)
 
     if start_date is None:
-        # Default: start next month
-        next_due = today_first + relativedelta(months=1)
+        # Default: current month — triggers immediate auto-log in handler
+        next_due = today_first
     else:
         # Advance from start_date (1st of that month) until we reach current or future cycle
         next_due = start_date.replace(day=1)

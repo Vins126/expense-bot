@@ -428,6 +428,7 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
             context.user_data[_LAST_SAVED] = {"row": row_num, "sheet": sheet_name, "expense": expense}
 
             budget_msg = ""
+            saldo_msg = ""
             if idx + 1 >= total:
                 parsed = datetime.strptime(expense.date, "%Y-%m-%d")
                 if is_income:
@@ -443,19 +444,27 @@ async def handle_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE
                             budget_msg = f"\n\n🚨 *Budget superato!* Hai speso €{t:.2f} su €{budget:.0f} ({pct:.0f}%)"
                         elif pct >= 80:
                             budget_msg = f"\n\n⚠️ Attenzione: hai usato l'*{pct:.0f}%* del budget (€{t:.2f} / €{budget:.0f})"
+                    try:
+                        from services.sheets import get_cumulative_balance
+                        bal = get_cumulative_balance()
+                        b = bal["balance"]
+                        saldo_emoji = "✅" if b >= 0 else "⚠️"
+                        saldo_msg = f"\n\n{saldo_emoji} *Saldo: €{b:.2f}*"
+                    except Exception:
+                        pass
 
             label = "Entrata" if is_income else "Spesa"
             emoji = "💰" if is_income else "✅"
 
             if total > 1:
                 await query.edit_message_text(
-                    f"{emoji} {label} {idx + 1}/{total} salvata: €{expense.amount:.2f} — {expense.description}" + budget_msg,
+                    f"{emoji} {label} {idx + 1}/{total} salvata: €{expense.amount:.2f} — {expense.description}" + budget_msg + saldo_msg,
                     parse_mode="Markdown",
                 )
             else:
                 detail = f"€{expense.amount:.2f} — {expense.description}" if is_income else f"€{expense.amount:.2f} — {expense.category}\n_{expense.description}_"
                 await query.edit_message_text(
-                    f"{emoji} *{label} salvata!*\n\n{detail}" + budget_msg,
+                    f"{emoji} *{label} salvata!*\n\n{detail}" + budget_msg + saldo_msg,
                     parse_mode="Markdown",
                 )
         except Exception as e:

@@ -141,6 +141,35 @@ def get_monthly_income(year: int, month: int) -> float:
     return total
 
 
+def get_cumulative_balance() -> dict:
+    """Returns {'income': float, 'expenses': float, 'balance': float} (all-time totals)."""
+    gc = _get_client()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    income = 0.0
+    try:
+        ws_in = sh.worksheet(_INCOME_SHEET)
+        for row in ws_in.get_all_values()[1:]:
+            if len(row) >= 2:
+                try:
+                    income += float(str(row[1]).replace(",", "."))
+                except ValueError:
+                    pass
+    except gspread.WorksheetNotFound:
+        pass
+    expenses = 0.0
+    try:
+        ws_ex = sh.worksheet(_EXPENSE_SHEET)
+        for row in ws_ex.get_all_values()[1:]:
+            if len(row) >= 2:
+                try:
+                    expenses += float(str(row[1]).replace(",", "."))
+                except ValueError:
+                    pass
+    except gspread.WorksheetNotFound:
+        pass
+    return {"income": income, "expenses": expenses, "balance": income - expenses}
+
+
 def get_effective_budget(year: int, month: int) -> float | None:
     """Returns monthly income if available, otherwise the manually-set budget."""
     from services.config_store import get as cfg_get
