@@ -11,7 +11,7 @@ from bot.admin import (
     cmd_adduser, cmd_removeuser, cmd_listusers, cmd_logs,
     cmd_status, cmd_help, cmd_budget, cmd_riepilogo, cmd_broadcast, cmd_ricorrente,
 )
-from services.sheets import ensure_dashboard_sheet, ensure_charts_sheet, ensure_income_sheet, sync_dashboard_categories
+from services.sheets import ensure_dashboard_sheet, ensure_charts_sheet, ensure_income_sheet, sync_dashboard_categories, ensure_balance_section
 from services.storage import initialize_users
 from services.config_store import load_config
 from services.scheduler import register_jobs
@@ -69,6 +69,7 @@ def main() -> None:
         ensure_dashboard_sheet()
         sync_dashboard_categories()
         ensure_income_sheet()
+        ensure_balance_section()
         ensure_charts_sheet()
 
         async def post_init(application: Application) -> None:

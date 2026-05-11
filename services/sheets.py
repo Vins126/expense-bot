@@ -171,7 +171,7 @@ def ensure_dashboard_sheet() -> None:
         if ws.acell("A1").value:
             return
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title="Riepilogo", rows=50, cols=4)
+        ws = sh.add_worksheet(title="Riepilogo", rows=70, cols=4)
 
     rows_cat = [[c, f'=SUMIF(Spese!C:C;"{c}";Spese!B:B)'] for c in CATEGORIES]
     ws.update("A1", [["--- TOTALE PER CATEGORIA ---"]], value_input_option="USER_ENTERED")
@@ -181,12 +181,18 @@ def ensure_dashboard_sheet() -> None:
     month_start = len(CATEGORIES) + 4
     ws.update(f"A{month_start}", [["--- TOTALE PER MESE ---"]], value_input_option="USER_ENTERED")
     ws.update(f"A{month_start+1}", [["Mese", "Totale (€)"]], value_input_option="USER_ENTERED")
-    months = [
-        "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
-        "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
-    ]
-    rows_month = [[m, f'=SUMIF(Spese!E:E;"{m}";Spese!B:B)'] for m in months]
+    rows_month = [[m, f'=SUMIF(Spese!E:E;"{m}";Spese!B:B)'] for m in _MONTHS]
     ws.update(f"A{month_start+2}", rows_month, value_input_option="USER_ENTERED")
+
+    balance_start = month_start + 15  # after months section + blank row
+    data_start = balance_start + 2
+    ws.update(f"A{balance_start}", [["--- SALDO MENSILE (Entrate - Spese) ---"]], value_input_option="USER_ENTERED")
+    ws.update(f"A{balance_start+1}", [["Mese", "Entrate (€)", "Spese (€)", "Saldo (€)"]], value_input_option="USER_ENTERED")
+    rows_balance = [
+        [m, f'=SUMIF(Entrate!D:D;"{m}";Entrate!B:B)', f'=SUMIF(Spese!E:E;"{m}";Spese!B:B)', f'=B{data_start+i}-C{data_start+i}']
+        for i, m in enumerate(_MONTHS)
+    ]
+    ws.update(f"A{data_start}", rows_balance, value_input_option="USER_ENTERED")
 
 
 def sync_dashboard_categories() -> None:
@@ -218,6 +224,43 @@ def sync_dashboard_categories() -> None:
 
     rows_to_insert = [[c, f'=SUMIF(Spese!C:C;"{c}";Spese!B:B)'] for c in missing]
     ws.insert_rows(rows_to_insert, row=month_section_row, value_input_option="USER_ENTERED")
+
+
+_MONTHS = [
+    "Gennaio", "Febbraio", "Marzo", "Aprile", "Maggio", "Giugno",
+    "Luglio", "Agosto", "Settembre", "Ottobre", "Novembre", "Dicembre",
+]
+
+
+def ensure_balance_section() -> None:
+    """Adds a monthly Entrate/Spese/Saldo section to the Riepilogo sheet if missing."""
+    gc = _get_client()
+    sh = gc.open_by_key(SPREADSHEET_ID)
+    try:
+        ws = sh.worksheet("Riepilogo")
+    except gspread.WorksheetNotFound:
+        return
+
+    col_a = ws.col_values(1)
+    if "--- SALDO MENSILE ---" in col_a:
+        return
+
+    balance_start = len(col_a) + 2  # one blank row gap
+    data_start = balance_start + 2   # title row + header row
+
+    ws.update(f"A{balance_start}", [["--- SALDO MENSILE (Entrate - Spese) ---"]], value_input_option="USER_ENTERED")
+    ws.update(f"A{balance_start+1}", [["Mese", "Entrate (€)", "Spese (€)", "Saldo (€)"]], value_input_option="USER_ENTERED")
+
+    rows = []
+    for i, month in enumerate(_MONTHS):
+        row_num = data_start + i
+        rows.append([
+            month,
+            f'=SUMIF(Entrate!D:D;"{month}";Entrate!B:B)',
+            f'=SUMIF(Spese!E:E;"{month}";Spese!B:B)',
+            f'=B{row_num}-C{row_num}',
+        ])
+    ws.update(f"A{data_start}", rows, value_input_option="USER_ENTERED")
 
 
 def ensure_charts_sheet() -> None:
