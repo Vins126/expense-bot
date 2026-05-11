@@ -13,8 +13,7 @@ CATEGORIES = [
     "Ristoranti/Bar",
     "Trasporti",
     "Abbigliamento",
-    "Salute",
-    "Farmacia",
+    "Salute/Farmacia",
     "Psicologa",
     "Casa/Utenze",
     "Costi Fissi",
@@ -54,7 +53,7 @@ Estrai TUTTE le voci presenti nel testo italiano dell'utente. Possono essere spe
 
 Note sulle categorie:
 - Action, Pepco e Tedi → categoria "Action"
-- Acquisti in farmacia/medicinali → categoria "Farmacia" (non "Salute")
+- Acquisti in farmacia, medicinali, visite mediche → categoria "Salute/Farmacia"
 - Sedute di psicologia/psicologa → categoria "Psicologa"
 
 Rispondi SOLO con un array JSON valido. Ogni elemento ha questi campi:
